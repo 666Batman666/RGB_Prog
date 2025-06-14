@@ -1,5 +1,5 @@
 //MEM2048X24.v already include in tb
-//you dont have to include here
+//沒用的城市 先給你們撐場面用
 
 module HDL_final(
     input clk,
