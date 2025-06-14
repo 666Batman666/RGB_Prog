@@ -1,4 +1,4 @@
-// 對一點點 v3
+// 應該可以用-負片跟深淺
 module HDL_final(
     input clk,
     input rst_n,
@@ -132,34 +132,76 @@ module HDL_final(
 
   //=== Stage 1: CC (Color Correction) ===
   // 直接在RGB域進行亮度調整
+  reg [7:0] temp_r, temp_g, temp_b;
+
   always @(*)
   begin
     if (CC)
     begin
-      // 分4個區域調整亮度
-      if (h_cnt < 480)
-      begin        // 第一部分: 減少 1.0*Brig
-        cc_r = (DPi[23:16] > Brig) ? (DPi[23:16] - Brig) : 8'd0;
-        cc_g = (DPi[15:8] > Brig) ? (DPi[15:8] - Brig) : 8'd0;
-        cc_b = (DPi[7:0] > Brig) ? (DPi[7:0] - Brig) : 8'd0;
+      // 上半部分：正常左暗右亮
+      if (v_cnt < 540)
+      begin
+        if (h_cnt < 480)
+        begin        // 第一部分: 減少 1.0*Brig
+          temp_r = (DPi[23:16] > Brig) ? (DPi[23:16] - Brig) : 8'd0;
+          temp_g = (DPi[15:8] > Brig) ? (DPi[15:8] - Brig) : 8'd0;
+          temp_b = (DPi[7:0] > Brig) ? (DPi[7:0] - Brig) : 8'd0;
+        end
+        else if (h_cnt < 960)
+        begin // 第二部分: 減少 0.5*Brig
+          temp_r = (DPi[23:16] > (Brig >> 1)) ? (DPi[23:16] - (Brig >> 1)) : 8'd0;
+          temp_g = (DPi[15:8] > (Brig >> 1)) ? (DPi[15:8] - (Brig >> 1)) : 8'd0;
+          temp_b = (DPi[7:0] > (Brig >> 1)) ? (DPi[7:0] - (Brig >> 1)) : 8'd0;
+        end
+        else if (h_cnt < 1440)
+        begin // 第三部分: 增加 0.5*Brig
+          temp_r = ((DPi[23:16] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[23:16] + (Brig >> 1));
+          temp_g = ((DPi[15:8] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[15:8] + (Brig >> 1));
+          temp_b = ((DPi[7:0] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[7:0] + (Brig >> 1));
+        end
+        else
+        begin                   // 第四部分: 增加 1.0*Brig
+          temp_r = ((DPi[23:16] + Brig) > 255) ? 8'd255 : (DPi[23:16] + Brig);
+          temp_g = ((DPi[15:8] + Brig) > 255) ? 8'd255 : (DPi[15:8] + Brig);
+          temp_b = ((DPi[7:0] + Brig) > 255) ? 8'd255 : (DPi[7:0] + Brig);
+        end
+
+        cc_r = temp_r;
+        cc_g = temp_g;
+        cc_b = temp_b;
       end
-      else if (h_cnt < 960)
-      begin // 第二部分: 減少 0.5*Brig
-        cc_r = (DPi[23:16] > (Brig >> 1)) ? (DPi[23:16] - (Brig >> 1)) : 8'd0;
-        cc_g = (DPi[15:8] > (Brig >> 1)) ? (DPi[15:8] - (Brig >> 1)) : 8'd0;
-        cc_b = (DPi[7:0] > (Brig >> 1)) ? (DPi[7:0] - (Brig >> 1)) : 8'd0;
-      end
-      else if (h_cnt < 1440)
-      begin // 第三部分: 增加 0.5*Brig
-        cc_r = ((DPi[23:16] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[23:16] + (Brig >> 1));
-        cc_g = ((DPi[15:8] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[15:8] + (Brig >> 1));
-        cc_b = ((DPi[7:0] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[7:0] + (Brig >> 1));
-      end
+      // 下半部分：左右交換後再負片
       else
-      begin                   // 第四部分: 增加 1.0*Brig
-        cc_r = ((DPi[23:16] + Brig) > 255) ? 8'd255 : (DPi[23:16] + Brig);
-        cc_g = ((DPi[15:8] + Brig) > 255) ? 8'd255 : (DPi[15:8] + Brig);
-        cc_b = ((DPi[7:0] + Brig) > 255) ? 8'd255 : (DPi[7:0] + Brig);
+      begin
+        if (h_cnt < 480)
+        begin        // 左邊變成: 增加 1.0*Brig (對應原右邊)
+          temp_r = ((DPi[23:16] + Brig) > 255) ? 8'd255 : (DPi[23:16] + Brig);
+          temp_g = ((DPi[15:8] + Brig) > 255) ? 8'd255 : (DPi[15:8] + Brig);
+          temp_b = ((DPi[7:0] + Brig) > 255) ? 8'd255 : (DPi[7:0] + Brig);
+        end
+        else if (h_cnt < 960)
+        begin // 第二部分: 增加 0.5*Brig (對應原第三部分)
+          temp_r = ((DPi[23:16] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[23:16] + (Brig >> 1));
+          temp_g = ((DPi[15:8] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[15:8] + (Brig >> 1));
+          temp_b = ((DPi[7:0] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[7:0] + (Brig >> 1));
+        end
+        else if (h_cnt < 1440)
+        begin // 第三部分: 減少 0.5*Brig (對應原第二部分)
+          temp_r = (DPi[23:16] > (Brig >> 1)) ? (DPi[23:16] - (Brig >> 1)) : 8'd0;
+          temp_g = (DPi[15:8] > (Brig >> 1)) ? (DPi[15:8] - (Brig >> 1)) : 8'd0;
+          temp_b = (DPi[7:0] > (Brig >> 1)) ? (DPi[7:0] - (Brig >> 1)) : 8'd0;
+        end
+        else
+        begin                   // 右邊變成: 減少 1.0*Brig (對應原左邊)
+          temp_r = (DPi[23:16] > Brig) ? (DPi[23:16] - Brig) : 8'd0;
+          temp_g = (DPi[15:8] > Brig) ? (DPi[15:8] - Brig) : 8'd0;
+          temp_b = (DPi[7:0] > Brig) ? (DPi[7:0] - Brig) : 8'd0;
+        end
+
+        // 負片處理
+        cc_r = 8'd255 - temp_r;
+        cc_g = 8'd255 - temp_g;
+        cc_b = 8'd255 - temp_b;
       end
     end
     else
@@ -258,45 +300,12 @@ module HDL_final(
   end
 
   //=== Stage 4: IG (Image Format) ===
-  // RGB to YUV to RGB 轉換
-  wire [15:0] yuv_y, yuv_u, yuv_v;
-  wire [15:0] rgb_r, rgb_g, rgb_b;
-  wire signed [8:0] u_diff, v_diff;
-
-  // RGB to YUV 轉換 (LAB10公式)
-  // Y = 0.299*R + 0.587*G + 0.114*B
-  // U = -0.169*R - 0.331*G + 0.5*B + 128
-  // V = 0.5*R - 0.419*G - 0.081*B + 128
-  assign yuv_y = (77 * stage3_data[23:16] + 150 * stage3_data[15:8] + 29 * stage3_data[7:0]);
-  assign yuv_u = ((128 * stage3_data[7:0] - 43 * stage3_data[23:16] - 85 * stage3_data[15:8]) + (128 << 8));
-  assign yuv_v = ((128 * stage3_data[23:16] - 107 * stage3_data[15:8] - 21 * stage3_data[7:0]) + (128 << 8));
-
-  // YUV to RGB 轉換 (LAB10公式)
-  // R = Y + 1.402*(V-128)
-  // G = Y - 0.344*(U-128) - 0.714*(V-128)
-  // B = Y + 1.772*(U-128)
-  assign u_diff = (yuv_u >> 8) - 128;
-  assign v_diff = (yuv_v >> 8) - 128;
-
-  assign rgb_r = (yuv_y >> 8) + ((359 * v_diff) >> 8);
-  assign rgb_g = (yuv_y >> 8) - ((88 * u_diff + 183 * v_diff) >> 8);
-  assign rgb_b = (yuv_y >> 8) + ((454 * u_diff) >> 8);
-
+  // 簡化的RGB處理，暫時保持透傳避免問題
   always @(*)
   begin
-    if (IG)
-    begin
-      // 限制RGB範圍並輸出
-      ig_r = (rgb_r[15]) ? 8'd0 : (rgb_r > 255) ? 8'd255 : rgb_r[7:0];
-      ig_g = (rgb_g[15]) ? 8'd0 : (rgb_g > 255) ? 8'd255 : rgb_g[7:0];
-      ig_b = (rgb_b[15]) ? 8'd0 : (rgb_b > 255) ? 8'd255 : rgb_b[7:0];
-    end
-    else
-    begin
-      ig_r = stage3_data[23:16];
-      ig_g = stage3_data[15:8];
-      ig_b = stage3_data[7:0];
-    end
+    ig_r = stage3_data[23:16];
+    ig_g = stage3_data[15:8];
+    ig_b = stage3_data[7:0];
   end
 
   // Stage 4 register
@@ -313,36 +322,22 @@ module HDL_final(
   end
 
   //=== Stage 5: UM (Unsharp Mask) ===
-  // 使用記憶體2實作邊緣增強
-  assign mem2_cs = 1'b1;
-  assign mem2_w_addr = h_cnt_d3;
-  assign mem2_r_addr = h_cnt_d4;
-  assign mem2_din = stage4_data[23:0];
-  assign mem2_web = ~DPi[24];
-  assign mem2_re = DPi[24];
-
-  wire [7:0] blur_r, blur_g, blur_b;
+  // 簡化的邊緣增強，不使用記憶體
   wire [7:0] edge_r, edge_g, edge_b;
 
-  // 簡化的模糊 (使用前一個像素)
-  assign blur_r = mem2_dout[23:16];
-  assign blur_g = mem2_dout[15:8];
-  assign blur_b = mem2_dout[7:0];
-
-  // 邊緣檢測 (絕對差值)
-  assign edge_r = (stage4_data[23:16] > blur_r) ? (stage4_data[23:16] - blur_r) : (blur_r - stage4_data[23:16]);
-  assign edge_g = (stage4_data[15:8] > blur_g) ? (stage4_data[15:8] - blur_g) : (blur_g - stage4_data[15:8]);
-  assign edge_b = (stage4_data[7:0] > blur_b) ? (stage4_data[7:0] - blur_b) : (blur_b - stage4_data[7:0]);
+  // 簡化的邊緣檢測 (基於像素值的變化)
+  assign edge_r = (stage4_data[23:16] > 128) ? (stage4_data[23:16] - 128) : (128 - stage4_data[23:16]);
+  assign edge_g = (stage4_data[15:8] > 128) ? (stage4_data[15:8] - 128) : (128 - stage4_data[15:8]);
+  assign edge_b = (stage4_data[7:0] > 128) ? (stage4_data[7:0] - 128) : (128 - stage4_data[7:0]);
 
   always @(*)
   begin
     if (UM)
     begin
-      // Unsharp Mask: Output = Input + α × Edge
-      // 使用 Brig 作為 α 係數 (0~199% 範圍)
-      enhanced_r = stage4_data[23:16] + ((Brig * edge_r) >> 8);
-      enhanced_g = stage4_data[15:8] + ((Brig * edge_g) >> 8);
-      enhanced_b = stage4_data[7:0] + ((Brig * edge_b) >> 8);
+      // 簡化的邊緣增強
+      enhanced_r = stage4_data[23:16] + ((edge_r * Brig) >> 9);
+      enhanced_g = stage4_data[15:8] + ((edge_g * Brig) >> 9);
+      enhanced_b = stage4_data[7:0] + ((edge_b * Brig) >> 9);
 
       // 限制輸出範圍
       um_r = (enhanced_r > 255) ? 8'd255 : enhanced_r[7:0];
@@ -370,13 +365,20 @@ module HDL_final(
     end
   end
 
-  // 記憶體1控制信號 (不使用)
+  // 記憶體控制信號 (不使用)
   assign mem1_cs = 1'b0;
   assign mem1_web = 1'b1;
   assign mem1_re = 1'b0;
   assign mem1_w_addr = 11'b0;
   assign mem1_r_addr = 11'b0;
   assign mem1_din = 24'b0;
+
+  assign mem2_cs = 1'b0;
+  assign mem2_web = 1'b1;
+  assign mem2_re = 1'b0;
+  assign mem2_w_addr = 11'b0;
+  assign mem2_r_addr = 11'b0;
+  assign mem2_din = 24'b0;
 
   //=== 最終輸出 ===
   // 根據功能開關選擇輸出階段
