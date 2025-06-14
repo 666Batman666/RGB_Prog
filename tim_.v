@@ -13,29 +13,32 @@ module timing_generator(
     input  [ 9:0]     v_start,
     input  [22:0]     vs_reset,
 
-    output reg [26:24]    Synco
+    output reg [2:0]    Synco
   );
 
   // Internal counters
-  reg [11:0] h_cnt;
-  reg [10:0] v_cnt;
+  reg [11:0] h_counter;
+  reg [10:0] v_counter;
+
+  // Timing signals
+  wire hsync, vsync, de;
 
   // Horizontal counter
   always @(posedge clk or negedge rst_n)
   begin
     if (!rst_n)
     begin
-      h_cnt <= 12'd0;
+      h_counter <= 0;
     end
     else
     begin
-      if (h_cnt >= h_total - 1)
+      if (h_counter == h_total - 1)
       begin
-        h_cnt <= 12'd0;
+        h_counter <= 0;
       end
       else
       begin
-        h_cnt <= h_cnt + 1'b1;
+        h_counter <= h_counter + 1;
       end
     end
   end
@@ -45,64 +48,36 @@ module timing_generator(
   begin
     if (!rst_n)
     begin
-      v_cnt <= 11'd0;
+      v_counter <= 0;
     end
     else
     begin
-      if (h_cnt >= h_total - 1)
+      if (h_counter == h_total - 1)
       begin
-        if (v_cnt >= v_total - 1)
+        if (v_counter == v_total - 1)
         begin
-          v_cnt <= 11'd0;
+          v_counter <= 0;
         end
         else
         begin
-          v_cnt <= v_cnt + 1'b1;
+          v_counter <= v_counter + 1;
         end
       end
     end
   end
 
   // Generate timing signals
-  always @(posedge clk or negedge rst_n)
+  assign hsync = (h_counter < h_sync) ? 1'b0 : 1'b1;
+  assign vsync = (v_counter < v_sync) ? 1'b0 : 1'b1;
+  assign de = ((h_counter >= h_start) && (h_counter < (h_start + h_size))) &&
+         ((v_counter >= v_start) && (v_counter < (v_start + v_size)));
+
+  // Output assignment
+  always @(*)
   begin
-    if (!rst_n)
-    begin
-      Synco <= 3'b000;
-    end
-    else
-    begin
-      // VSync (bit 26)
-      if (v_cnt < v_sync)
-      begin
-        Synco[2] <= 1'b1;
-      end
-      else
-      begin
-        Synco[2] <= 1'b0;
-      end
-
-      // HSync (bit 25)
-      if (h_cnt < h_sync)
-      begin
-        Synco[1] <= 1'b1;
-      end
-      else
-      begin
-        Synco[1] <= 1'b0;
-      end
-
-      // Data Enable (bit 24)
-      if ((h_cnt >= h_start && h_cnt < h_start + h_size) &&
-          (v_cnt >= v_start && v_cnt < v_start + v_size))
-      begin
-        Synco[0] <= 1'b1;
-      end
-      else
-      begin
-        Synco[0] <= 1'b0;
-      end
-    end
+    Synco[2] = hsync;  // Hsync
+    Synco[1] = vsync;  // Vsync
+    Synco[0] = de;     // Data Enable
   end
 
 endmodule
