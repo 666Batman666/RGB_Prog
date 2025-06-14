@@ -1,6 +1,7 @@
 //MEM2048X24.v already include in tb
 //you dont have to include here
 // v - new - 02:37 有R2Y Y2R
+// 建議把註解換掉 跟別人的有點太像了
 module HDL_final(
     input        clk,
     input        rst_n,
