@@ -1,480 +1,430 @@
-// FF 有點怪 V-4
+//MEM2048X24.v already include in tb
+//you dont have to include here
+// v - new - 02:37 有R2Y Y2R
 module HDL_final(
-    input clk,
-    input rst_n,
-    input CC,
-    input TP,
-    input IM,
-    input IG,
-    input UM,
-    input [7:0] Brig,
-    input [26:0] DPi,
-
-    input [2:0] Sync_IM,
-    input [2:0] Sync_IG,
-    input [2:0] Sync_UM,
-
+    input        clk,
+    input        rst_n,
+    input        CC,
+    input        TP,
+    input        IM,
+    input        IG,
+    input        UM,
+    input  [7:0] Brig,
+    input  [26:0] DPi,
+    input  [2:0] Sync_IM,
+    input  [2:0] Sync_IG,    
+    input  [2:0] Sync_UM,    
     output reg [26:0] DPo
-  );
+);
 
-  // 位置計數器
-  reg [10:0] h_cnt, v_cnt;
+    //==================================================================
+    // 內部信號宣告
+    //==================================================================
+    
+    // 同步控制信號
+    reg Den_last, Den_last2;
+    
+    // 位置計數器
+    reg [11:0] v_cnt;
+    reg [11:0] h_cnt;
+    
+    // RGB/YUV 信號
+    wire [7:0] R, G, B, Y, U, V, R_temp, G_temp, B_temp, Y_old;
+    reg  [7:0] r, g, b;
+    reg  signed [10:0] YY;
+    
+    // YUV轉換相關
+    assign Y = (YY > 255) ? 255 : (YY < 0) ? 0 : YY;
+    assign R = DPi[23:16];
+    assign G = DPi[15:8];
+    assign B = DPi[7:0];
+    assign R_temp = (v_cnt <= 540) ? R : 255 - R;
+    assign G_temp = (v_cnt <= 540) ? G : 255 - G;
+    assign B_temp = (v_cnt <= 540) ? B : 255 - B;
 
-  // Pipeline stages
-  reg [26:0] stage1_data, stage2_data, stage3_data, stage4_data, stage5_data;
-  reg [10:0] h_cnt_d1, v_cnt_d1, h_cnt_d2, v_cnt_d2, h_cnt_d3, v_cnt_d3, h_cnt_d4, v_cnt_d4;
+    //==================================================================
+    // RGB to YUV 轉換
+    //==================================================================
+    
+    wire signed [17:0] y_temp = R_temp * 10'd77 + G_temp * 10'd150 + B_temp * 10'd29;
+    wire signed [17:0] u_temp = R_temp * -10'sd43 + G_temp * -10'sd85 + B_temp * 10'sd128 + (128 <<< 8); 
+    wire signed [17:0] v_temp = R_temp * 10'sd128 + G_temp * -10'sd107 + B_temp * -10'sd21 + (128 <<< 8);
+    
+    assign Y_old = (y_temp + 8'd128) >>> 8;
+    assign U = (u_temp + 8'd128) >>> 8;
+    assign V = (v_temp + 8'd128) >>> 8;
 
-  // Stage 1: CC相關變數
-  reg [7:0] cc_r, cc_g, cc_b;
+    //==================================================================
+    // YUV to RGB 轉換係數 (Q2.8 格式)
+    //==================================================================
+    
+    localparam signed [10:0] C_RV = 11'sd359;   // +1.13983 * 256
+    localparam signed [10:0] C_GU = -11'sd88;   // -0.39465 * 256
+    localparam signed [10:0] C_GV = -11'sd183;  // -0.58060 * 256
+    localparam signed [10:0] C_BU = 11'sd453;   // +2.03211 * 256
 
-  // Stage 2: TP相關變數
-  reg [7:0] tp_r, tp_g, tp_b;
+    // (U-128) / (V-128) 偏移計算
+    wire signed [8:0] U_off = $signed({1'b0, U}) - 9'sd128;   // -128 ~ +127
+    wire signed [8:0] V_off = $signed({1'b0, V}) - 9'sd128;   // -128 ~ +127
 
-  // Stage 3: IM相關變數
-  reg [7:0] im_r, im_g, im_b;
+    // 19-bit 乘法結果
+    wire signed [19:0] RV = V_off * C_RV;   // 9+10 → 19b
+    wire signed [19:0] GU = U_off * C_GU;
+    wire signed [19:0] GV = V_off * C_GV;
+    wire signed [19:0] BU = U_off * C_BU;
+    
+    // 把 Y 變成 Q8.8 並對齊成 19b
+    wire signed [19:0] Y_q88 = {4'b000, Y, 8'd0};   // 0|Y[7:0]|8'b0
 
-  // Stage 4: IG相關變數
-  reg [7:0] ig_r, ig_g, ig_b;
+    // 三色臨時值 (全部 19b)
+    wire signed [19:0] r19 = Y_q88 + RV;
+    wire signed [19:0] g19 = Y_q88 + GU + GV;
+    wire signed [19:0] b19 = Y_q88 + BU;
 
-  // Stage 5: UM相關變數
-  reg [7:0] um_r, um_g, um_b;
-  reg [15:0] enhanced_r, enhanced_g, enhanced_b;
-
-  // 記憶體控制信號
-  wire [10:0] mem1_r_addr, mem1_w_addr, mem2_r_addr, mem2_w_addr;
-  wire [23:0] mem1_din, mem2_din;
-  wire [23:0] mem1_dout, mem2_dout;
-  wire mem1_web, mem1_re, mem1_cs, mem2_web, mem2_re, mem2_cs;
-
-  // 記憶體實例化
-  MEM2048X24 mem1 (
-               .CK(clk),
-               .CS(mem1_cs),
-               .WEB(mem1_web),
-               .RE(mem1_re),
-               .R_ADDR(mem1_r_addr),
-               .W_ADDR(mem1_w_addr),
-               .D_IN(mem1_din),
-               .D_OUT(mem1_dout)
-             );
-
-  MEM2048X24 mem2 (
-               .CK(clk),
-               .CS(mem2_cs),
-               .WEB(mem2_web),
-               .RE(mem2_re),
-               .R_ADDR(mem2_r_addr),
-               .W_ADDR(mem2_w_addr),
-               .D_IN(mem2_din),
-               .D_OUT(mem2_dout)
-             );
-
-  //=== 位置計數器 ===
-  always @(posedge clk or negedge rst_n)
-  begin
-    if (!rst_n)
-    begin
-      h_cnt <= 0;
-      v_cnt <= 0;
-    end
-    else if (DPi[24])
-    begin // den有效時計數
-      if (h_cnt == 1919)
-      begin
-        h_cnt <= 0;
-        if (v_cnt == 1079)
+    //==================================================================
+    // Q8.8 to U8 轉換函數
+    //==================================================================
+    
+    function [7:0] q88_to_u8;
+        input signed [19:0] v;
+        reg [7:0] temp;
         begin
-          v_cnt <= 0;
+            if (v < 0) 
+                q88_to_u8 = 8'd0;
+            else if (v > 20'sd65280) 
+                q88_to_u8 = 8'd255;   // 255*256
+            else begin
+                q88_to_u8 = (v + 128) >>> 8;  // round-half-up
+            end  
         end
+    endfunction
+
+    //==================================================================
+    // CC 功能: 亮度調整邏輯
+    //==================================================================
+    
+    always @(*) begin
+        if (!Brig[7]) begin
+            if (h_cnt < 480) begin
+                YY = Y_old - Brig[6:0];
+            end 
+            else if (h_cnt < 960) begin
+                YY = Y_old - (Brig[6:0] >> 1);
+            end 
+            else if (h_cnt < 1440) begin
+                YY = Y_old + (Brig[6:0] >> 1);
+            end 
+            else begin
+                YY = Y_old + Brig[6:0];
+            end
+        end 
+        else begin
+            if (h_cnt < 480) begin
+                YY = Y_old + Brig[6:0];
+            end 
+            else if (h_cnt < 960) begin
+                YY = Y_old + (Brig[6:0] >> 1);
+            end 
+            else if (h_cnt < 1440) begin
+                YY = Y_old - (Brig[6:0] >> 1);
+            end 
+            else begin
+                YY = Y_old - Brig[6:0];
+            end
+        end
+    end
+
+    //==================================================================
+    // 同步控制
+    //==================================================================
+    
+    always @(posedge clk) begin
+        Den_last  <= DPi[24];
+        Den_last2 <= Den_last;
+    end
+
+    // 垂直計數器
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            v_cnt <= 11'd0;
+        end
+        else begin
+            if (DPi[26])
+                v_cnt <= 11'd0;
+            else if ({Den_last, DPi[24]} == 2'b10)
+                v_cnt <= v_cnt + 1'd1;
+        end
+    end
+
+    // 水平計數器
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            h_cnt <= 12'd0;
+        end
+        else begin
+            if ({Den_last, DPi[24]} == 2'b10)
+                h_cnt <= 12'd0;
+            else if (DPi[24])
+                h_cnt <= h_cnt + 1'd1;
+        end
+    end
+
+    //==================================================================
+    // TP 功能: 測試圖案生成
+    //==================================================================
+    
+    wire [7:0] b2 = (h_cnt >> 3);
+    wire [7:0] r2 = 255 - (h_cnt >> 3);
+    reg  [19:0] X2, Y2;
+    wire [20:0] D2 = X2 + Y2;
+    reg  [7:0] value;
+    
+    always @(*) begin
+        if (h_cnt < 990) begin
+            X2 = h_cnt * h_cnt;
+        end 
+        else begin
+            X2 = (1919 - h_cnt) * (1919 - h_cnt);
+        end
+        
+        if (v_cnt < 540) begin
+            Y2 = (539 - v_cnt) * (539 - v_cnt);
+        end 
+        else begin
+            Y2 = (v_cnt - 539) * (v_cnt - 539);
+        end
+        
+        if (D2 >= 65536) begin
+            value = 0;
+        end 
+        else begin
+            value = 255 - (D2 >> 8);
+        end
+    end
+
+    //==================================================================
+    // IM 功能: 圖像動作相關信號
+    //==================================================================
+    
+    reg [23:0] Din1_IM, Din2_IM, Dout1_IM, Dout2_IM;
+    wire [10:0] W_ADDR1_IM = h_cnt;
+    wire [10:0] W_ADDR2_IM = h_cnt;
+    reg [11:0] v_out_IM;
+    reg [11:0] h_out_IM;
+    reg [10:0] x_out_IM;
+    wire [10:0] R_ADDR1_IM = x_out_IM;
+    wire [10:0] R_ADDR2_IM = x_out_IM;
+    
+    always @(*) begin
+        if (IM && h_out_IM < 960 && v_out_IM < 540) begin
+            x_out_IM = 960 - h_out_IM;
+        end 
+        else if (IM && h_out_IM > 960 && v_out_IM > 540) begin
+            x_out_IM = 1919 - (h_out_IM - 960);
+        end 
         else
-        begin
-          v_cnt <= v_cnt + 1;
+            x_out_IM = h_out_IM;
+            
+        // Din 信號選擇
+        if (CC) begin
+            Din1_IM = {q88_to_u8(r19), q88_to_u8(g19), q88_to_u8(b19)};
+            Din2_IM = {q88_to_u8(r19), q88_to_u8(g19), q88_to_u8(b19)};
+        end	
+        else begin
+            Din1_IM = DPi[23:0];
+            Din2_IM = DPi[23:0];
         end
-      end
-      else
-      begin
-        h_cnt <= h_cnt + 1;
-      end
     end
-    else if (DPi[26])
-    begin // vsync重置
-      h_cnt <= 0;
-      v_cnt <= 0;
-    end
-  end
 
-  // Pipeline計數器延遲
-  always @(posedge clk or negedge rst_n)
-  begin
-    if (!rst_n)
-    begin
-      h_cnt_d1 <= 0;
-      v_cnt_d1 <= 0;
-      h_cnt_d2 <= 0;
-      v_cnt_d2 <= 0;
-      h_cnt_d3 <= 0;
-      v_cnt_d3 <= 0;
-      h_cnt_d4 <= 0;
-      v_cnt_d4 <= 0;
-    end
-    else
-    begin
-      h_cnt_d1 <= h_cnt;
-      v_cnt_d1 <= v_cnt;
-      h_cnt_d2 <= h_cnt_d1;
-      v_cnt_d2 <= v_cnt_d1;
-      h_cnt_d3 <= h_cnt_d2;
-      v_cnt_d3 <= v_cnt_d2;
-      h_cnt_d4 <= h_cnt_d3;
-      v_cnt_d4 <= v_cnt_d3;
-    end
-  end
-
-  //=== Stage 1: CC (Color Correction) ===
-  // 直接在RGB域進行亮度調整
-  reg [7:0] temp_r, temp_g, temp_b;
-
-  always @(*)
-  begin
-    if (CC)
-    begin
-      // 當 Brig=255 時，使用適中的處理方式並加強第四格的暗度
-      if (Brig == 8'd255)
-      begin
-        // 上半部分：適中對比度的漸變，第四格更暗
-        if (v_cnt < 540)
-        begin
-          if (h_cnt < 480)
-          begin        // 第一部分: 中亮
-            temp_r = ((DPi[23:16] + 64) > 255) ? 8'd255 : (DPi[23:16] + 64);
-            temp_g = ((DPi[15:8] + 64) > 255) ? 8'd255 : (DPi[15:8] + 64);
-            temp_b = ((DPi[7:0] + 64) > 255) ? 8'd255 : (DPi[7:0] + 64);
-          end
-          else if (h_cnt < 960)
-          begin // 第二部分: 最亮
-            temp_r = DPi[23:16];
-            temp_g = DPi[15:8];
-            temp_b = DPi[7:0];
-          end
-          else if (h_cnt < 1440)
-          begin // 第三部分: 中暗
-            temp_r = (DPi[23:16] > 64) ? (DPi[23:16] - 64) : 8'd0;
-            temp_g = (DPi[15:8] > 64) ? (DPi[15:8] - 64) : 8'd0;
-            temp_b = (DPi[7:0] > 64) ? (DPi[7:0] - 64) : 8'd0;
-          end
-          else
-          begin                   // 第四部分: 更暗 (除以8)
-            temp_r = DPi[23:16] >> 3;
-            temp_g = DPi[15:8] >> 3;
-            temp_b = DPi[7:0] >> 3;
-          end
-
-          cc_r = temp_r;
-          cc_g = temp_g;
-          cc_b = temp_b;
+    //==================================================================
+    // IG 功能: 圖像格式相關信號
+    //==================================================================
+    
+    reg [23:0] Din1_IG, Din2_IG, Dout1_IG, Dout2_IG;
+    wire [10:0] W_ADDR1_IG = h_out_IM;
+    wire [10:0] W_ADDR2_IG = h_out_IM;
+    reg [11:0] v_out_IG;
+    reg [11:0] h_out_IG;
+    wire [10:0] R_ADDR1_IG = h_out_IG;
+    wire [10:0] R_ADDR2_IG = h_out_IG;
+    reg [23:0] window [0:3];
+    reg [7:0] aver, aveg, aveb;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            window[0] <= 24'd0;
+            window[2] <= 24'd0;
         end
-        // 下半部分：對應處理後負片，第四格負片後更暗
-        else
-        begin
-          if (h_cnt < 480)
-          begin        // 第一部分: 更暗再負片 → 負片後變很亮
-            temp_r = DPi[23:16] >> 3;
-            temp_g = DPi[15:8] >> 3;
-            temp_b = DPi[7:0] >> 3;
-          end
-          else if (h_cnt < 960)
-          begin // 第二部分: 中暗再負片 → 負片後變中亮
-            temp_r = (DPi[23:16] > 64) ? (DPi[23:16] - 64) : 8'd0;
-            temp_g = (DPi[15:8] > 64) ? (DPi[15:8] - 64) : 8'd0;
-            temp_b = (DPi[7:0] > 64) ? (DPi[7:0] - 64) : 8'd0;
-          end
-          else if (h_cnt < 1440)
-          begin // 第三部分: 原圖再負片 → 負片後變中暗
-            temp_r = DPi[23:16];
-            temp_g = DPi[15:8];
-            temp_b = DPi[7:0];
-          end
-          else
-          begin                   // 第四部分: 很亮再負片 → 負片後變更暗
-            temp_r = ((DPi[23:16] + 128) > 255) ? 8'd255 : (DPi[23:16] + 128);
-            temp_g = ((DPi[15:8] + 128) > 255) ? 8'd255 : (DPi[15:8] + 128);
-            temp_b = ((DPi[7:0] + 128) > 255) ? 8'd255 : (DPi[7:0] + 128);
-          end
-
-          // 負片處理
-          cc_r = 8'd255 - temp_r;
-          cc_g = 8'd255 - temp_g;
-          cc_b = 8'd255 - temp_b;
+        else begin
+            // shift window
+            if (h_out_IG[0]) begin
+                window[0] <= window[1];
+                window[2] <= window[3];
+            end
         end
-      end
-      else
-      begin
-        // 原有的漸變處理 (適用於 Brig != 255)
-        // 上半部分：正常左暗右亮
-        if (v_cnt < 540)
-        begin
-          if (h_cnt < 480)
-          begin        // 第一部分: 減少 1.0*Brig
-            temp_r = (DPi[23:16] > Brig) ? (DPi[23:16] - Brig) : 8'd0;
-            temp_g = (DPi[15:8] > Brig) ? (DPi[15:8] - Brig) : 8'd0;
-            temp_b = (DPi[7:0] > Brig) ? (DPi[7:0] - Brig) : 8'd0;
-          end
-          else if (h_cnt < 960)
-          begin // 第二部分: 減少 0.5*Brig
-            temp_r = (DPi[23:16] > (Brig >> 1)) ? (DPi[23:16] - (Brig >> 1)) : 8'd0;
-            temp_g = (DPi[15:8] > (Brig >> 1)) ? (DPi[15:8] - (Brig >> 1)) : 8'd0;
-            temp_b = (DPi[7:0] > (Brig >> 1)) ? (DPi[7:0] - (Brig >> 1)) : 8'd0;
-          end
-          else if (h_cnt < 1440)
-          begin // 第三部分: 增加 0.5*Brig
-            temp_r = ((DPi[23:16] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[23:16] + (Brig >> 1));
-            temp_g = ((DPi[15:8] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[15:8] + (Brig >> 1));
-            temp_b = ((DPi[7:0] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[7:0] + (Brig >> 1));
-          end
-          else
-          begin                   // 第四部分: 增加 1.0*Brig
-            temp_r = ((DPi[23:16] + Brig) > 255) ? 8'd255 : (DPi[23:16] + Brig);
-            temp_g = ((DPi[15:8] + Brig) > 255) ? 8'd255 : (DPi[15:8] + Brig);
-            temp_b = ((DPi[7:0] + Brig) > 255) ? 8'd255 : (DPi[7:0] + Brig);
-          end
-
-          cc_r = temp_r;
-          cc_g = temp_g;
-          cc_b = temp_b;
+    end
+    
+    always @(*) begin
+        Din1_IG = (!v_out_IM[0]) ? Dout1_IM : Dout2_IM;
+        Din2_IG = (!v_out_IM[0]) ? Dout1_IM : Dout2_IM;
+        window[1] = Dout1_IG;
+        window[3] = Dout2_IG;
+        
+        if (h_out_IG[0]) begin
+            aver = (window[0][23:16] + window[1][23:16] + window[2][23:16] + window[3][23:16]) / 4;
+            aveg = (window[0][15:8] + window[1][15:8] + window[2][15:8] + window[3][15:8]) / 4;
+            aveb = (window[0][7:0] + window[1][7:0] + window[2][7:0] + window[3][7:0]) / 4;
         end
-        // 下半部分：左右交換後再負片
-        else
-        begin
-          if (h_cnt < 480)
-          begin        // 左邊變成: 增加 1.0*Brig (對應原右邊)
-            temp_r = ((DPi[23:16] + Brig) > 255) ? 8'd255 : (DPi[23:16] + Brig);
-            temp_g = ((DPi[15:8] + Brig) > 255) ? 8'd255 : (DPi[15:8] + Brig);
-            temp_b = ((DPi[7:0] + Brig) > 255) ? 8'd255 : (DPi[7:0] + Brig);
-          end
-          else if (h_cnt < 960)
-          begin // 第二部分: 增加 0.5*Brig (對應原第三部分)
-            temp_r = ((DPi[23:16] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[23:16] + (Brig >> 1));
-            temp_g = ((DPi[15:8] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[15:8] + (Brig >> 1));
-            temp_b = ((DPi[7:0] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[7:0] + (Brig >> 1));
-          end
-          else if (h_cnt < 1440)
-          begin // 第三部分: 減少 0.5*Brig (對應原第二部分)
-            temp_r = (DPi[23:16] > (Brig >> 1)) ? (DPi[23:16] - (Brig >> 1)) : 8'd0;
-            temp_g = (DPi[15:8] > (Brig >> 1)) ? (DPi[15:8] - (Brig >> 1)) : 8'd0;
-            temp_b = (DPi[7:0] > (Brig >> 1)) ? (DPi[7:0] - (Brig >> 1)) : 8'd0;
-          end
-          else
-          begin                   // 右邊變成: 減少 1.0*Brig (對應原左邊)
-            temp_r = (DPi[23:16] > Brig) ? (DPi[23:16] - Brig) : 8'd0;
-            temp_g = (DPi[15:8] > Brig) ? (DPi[15:8] - Brig) : 8'd0;
-            temp_b = (DPi[7:0] > Brig) ? (DPi[7:0] - Brig) : 8'd0;
-          end
+    end
 
-          // 負片處理
-          cc_r = 8'd255 - temp_r;
-          cc_g = 8'd255 - temp_g;
-          cc_b = 8'd255 - temp_b;
+    //==================================================================
+    // UM 功能: 記憶體控制信號 (宣告但未完整實現)
+    //==================================================================
+    
+    wire [10:0] R_ADDR1_UM, R_ADDR2_UM, W_ADDR1_UM, W_ADDR2_UM;
+    wire [23:0] Din1_UM, Din2_UM, Dout1_UM, Dout2_UM;
+
+    //==================================================================
+    // 計數器控制邏輯
+    //==================================================================
+    
+    // h&v cnt out IM
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            h_out_IM <= 12'd0;
+            v_out_IM <= 12'd0;
         end
-      end
+        else begin
+            if (Sync_IM[0]) begin  
+                if (h_out_IM == 1919) begin
+                    h_out_IM <= 0;
+                    v_out_IM <= v_out_IM + 1;
+                end 
+                else begin
+                    h_out_IM <= h_out_IM + 1'd1;
+                end    
+            end
+        end
     end
-    else
-    begin
-      cc_r = DPi[23:16];
-      cc_g = DPi[15:8];
-      cc_b = DPi[7:0];
+    
+    // h&v cnt out IG
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            h_out_IG <= 12'd0;
+            v_out_IG <= 12'd0;
+        end
+        else begin
+            if (Sync_IG[0]) begin  
+                if (h_out_IG == 1919) begin
+                    h_out_IG <= 0;
+                    v_out_IG <= v_out_IG + 1;
+                end 
+                else begin
+                    h_out_IG <= h_out_IG + 1'd1;
+                end    
+            end
+        end
     end
-  end
 
-  // Stage 1 register
-  always @(posedge clk or negedge rst_n)
-  begin
-    if (!rst_n)
-    begin
-      stage1_data <= 0;
+    //==================================================================
+    // 最終輸出邏輯
+    //==================================================================
+    
+    always @(*) begin
+        if (CC && !IM) begin
+            r = q88_to_u8(r19);
+            g = q88_to_u8(g19);
+            b = q88_to_u8(b19);
+            DPo = {DPi[26:24], r, g, b};
+        end 
+        else if (TP) begin
+            r = (value > r2) ? value : r2;
+            g = value;
+            b = (value > b2) ? value : b2;
+            DPo = {DPi[26:24], r, g, b};
+        end 
+        else if (IM && !IG) begin
+            r = (!v_out_IM[0]) ? Dout1_IM[23:16] : Dout2_IM[23:16];
+            g = (!v_out_IM[0]) ? Dout1_IM[15:8] : Dout2_IM[15:8];
+            b = (!v_out_IM[0]) ? Dout1_IM[7:0] : Dout2_IM[7:0];
+            DPo = {Sync_IM, r, g, b};
+        end 
+        else if (IG && !UM) begin
+            DPo = {Sync_IG, aver, aveg, aveb};
+        end
     end
-    else
-    begin
-      stage1_data <= {DPi[26:24], cc_r, cc_g, cc_b};
-    end
-  end
 
-  //=== Stage 2: TP (Test Pattern) ===
-  always @(*)
-  begin
-    if (TP)
-    begin
-      // 簡單的測試圖案
-      if (h_cnt_d1 < 480)
-      begin
-        tp_r = 8'd255;
-        tp_g = 8'd0;
-        tp_b = 8'd0;      // Red
-      end
-      else if (h_cnt_d1 < 960)
-      begin
-        tp_r = 8'd0;
-        tp_g = 8'd255;
-        tp_b = 8'd0;      // Green
-      end
-      else if (h_cnt_d1 < 1440)
-      begin
-        tp_r = 8'd0;
-        tp_g = 8'd0;
-        tp_b = 8'd255;      // Blue
-      end
-      else
-      begin
-        tp_r = 8'd255;
-        tp_g = 8'd255;
-        tp_b = 8'd255;  // White
-      end
-    end
-    else
-    begin
-      tp_r = stage1_data[23:16];
-      tp_g = stage1_data[15:8];
-      tp_b = stage1_data[7:0];
-    end
-  end
-
-  // Stage 2 register
-  always @(posedge clk or negedge rst_n)
-  begin
-    if (!rst_n)
-    begin
-      stage2_data <= 0;
-    end
-    else
-    begin
-      stage2_data <= {stage1_data[26:24], tp_r, tp_g, tp_b};
-    end
-  end
-
-  //=== Stage 3: IM (Image Motion) ===
-  // 暫時保持簡單的透傳
-  always @(*)
-  begin
-    im_r = stage2_data[23:16];
-    im_g = stage2_data[15:8];
-    im_b = stage2_data[7:0];
-  end
-
-  // Stage 3 register
-  always @(posedge clk or negedge rst_n)
-  begin
-    if (!rst_n)
-    begin
-      stage3_data <= 0;
-    end
-    else
-    begin
-      stage3_data <= {stage2_data[26:24], im_r, im_g, im_b};
-    end
-  end
-
-  //=== Stage 4: IG (Image Format) ===
-  // 簡化的RGB處理，暫時保持透傳避免問題
-  always @(*)
-  begin
-    ig_r = stage3_data[23:16];
-    ig_g = stage3_data[15:8];
-    ig_b = stage3_data[7:0];
-  end
-
-  // Stage 4 register
-  always @(posedge clk or negedge rst_n)
-  begin
-    if (!rst_n)
-    begin
-      stage4_data <= 0;
-    end
-    else
-    begin
-      stage4_data <= {stage3_data[26:24], ig_r, ig_g, ig_b};
-    end
-  end
-
-  //=== Stage 5: UM (Unsharp Mask) ===
-  // 簡化的邊緣增強，不使用記憶體
-  wire [7:0] edge_r, edge_g, edge_b;
-
-  // 簡化的邊緣檢測 (基於像素值的變化)
-  assign edge_r = (stage4_data[23:16] > 128) ? (stage4_data[23:16] - 128) : (128 - stage4_data[23:16]);
-  assign edge_g = (stage4_data[15:8] > 128) ? (stage4_data[15:8] - 128) : (128 - stage4_data[15:8]);
-  assign edge_b = (stage4_data[7:0] > 128) ? (stage4_data[7:0] - 128) : (128 - stage4_data[7:0]);
-
-  always @(*)
-  begin
-    if (UM)
-    begin
-      // 簡化的邊緣增強
-      enhanced_r = stage4_data[23:16] + ((edge_r * Brig) >> 9);
-      enhanced_g = stage4_data[15:8] + ((edge_g * Brig) >> 9);
-      enhanced_b = stage4_data[7:0] + ((edge_b * Brig) >> 9);
-
-      // 限制輸出範圍
-      um_r = (enhanced_r > 255) ? 8'd255 : enhanced_r[7:0];
-      um_g = (enhanced_g > 255) ? 8'd255 : enhanced_g[7:0];
-      um_b = (enhanced_b > 255) ? 8'd255 : enhanced_b[7:0];
-    end
-    else
-    begin
-      um_r = stage4_data[23:16];
-      um_g = stage4_data[15:8];
-      um_b = stage4_data[7:0];
-    end
-  end
-
-  // Stage 5 register
-  always @(posedge clk or negedge rst_n)
-  begin
-    if (!rst_n)
-    begin
-      stage5_data <= 0;
-    end
-    else
-    begin
-      stage5_data <= {stage4_data[26:24], um_r, um_g, um_b};
-    end
-  end
-
-  // 記憶體控制信號 (不使用)
-  assign mem1_cs = 1'b0;
-  assign mem1_web = 1'b1;
-  assign mem1_re = 1'b0;
-  assign mem1_w_addr = 11'b0;
-  assign mem1_r_addr = 11'b0;
-  assign mem1_din = 24'b0;
-
-  assign mem2_cs = 1'b0;
-  assign mem2_web = 1'b1;
-  assign mem2_re = 1'b0;
-  assign mem2_w_addr = 11'b0;
-  assign mem2_r_addr = 11'b0;
-  assign mem2_din = 24'b0;
-
-  //=== 最終輸出 ===
-  // 根據功能開關選擇輸出階段
-  always @(posedge clk or negedge rst_n)
-  begin
-    if (!rst_n)
-    begin
-      DPo <= 0;
-    end
-    else
-    begin
-      // 根據開啟的功能選擇對應階段的輸出
-      if (UM)
-        DPo <= stage5_data;
-      else if (IG)
-        DPo <= stage4_data;
-      else if (IM)
-        DPo <= stage3_data;
-      else if (TP)
-        DPo <= stage2_data;
-      else
-        DPo <= stage1_data;  // 只有CC功能時直接輸出stage1
-    end
-  end
+    //==================================================================
+    // 記憶體實例化
+    //==================================================================
+    
+    // IM 功能記憶體
+    MEM2048X24 mem1IM(
+        .CK     (clk),
+        .CS     (1'b1),
+        .WEB    (!v_cnt[0]),
+        .RE     (1'b1),
+        .R_ADDR (R_ADDR1_IM),
+        .W_ADDR (W_ADDR1_IM),
+        .D_IN   (Din1_IM),
+        .D_OUT  (Dout1_IM)
+    );
+    
+    MEM2048X24 mem2IM(
+        .CK     (clk),
+        .CS     (1'b1),
+        .WEB    (v_cnt[0]),
+        .RE     (1'b1),
+        .R_ADDR (R_ADDR2_IM),
+        .W_ADDR (W_ADDR2_IM),
+        .D_IN   (Din2_IM),
+        .D_OUT  (Dout2_IM)
+    );
+    
+    // IG 功能記憶體
+    MEM2048X24 mem1IG(
+        .CK     (clk),
+        .CS     (1'b1),
+        .WEB    (!v_out_IM[0]),
+        .RE     (1'b1),
+        .R_ADDR (R_ADDR1_IG),
+        .W_ADDR (W_ADDR1_IG),
+        .D_IN   (Din1_IG),
+        .D_OUT  (Dout1_IG)
+    );
+    
+    MEM2048X24 mem2IG(
+        .CK     (clk),
+        .CS     (1'b1),
+        .WEB    (v_out_IM[0]),
+        .RE     (1'b1),
+        .R_ADDR (R_ADDR2_IG),
+        .W_ADDR (W_ADDR2_IG),
+        .D_IN   (Din2_IG),
+        .D_OUT  (Dout2_IG)
+    );
+    
+    // UM 功能記憶體
+    MEM2048X24 mem1UM(
+        .CK     (clk),
+        .CS     (1'b1),
+        .WEB    (!v_out_IG[0]),
+        .RE     (1'b1),
+        .R_ADDR (R_ADDR1_UM),
+        .W_ADDR (W_ADDR1_UM),
+        .D_IN   (Din1_UM),
+        .D_OUT  (Dout1_UM)
+    );
+    
+    MEM2048X24 mem2UM(
+        .CK     (clk),
+        .CS     (1'b1),
+        .WEB    (v_out_IG[0]),
+        .RE     (1'b1),
+        .R_ADDR (R_ADDR2_UM),
+        .W_ADDR (W_ADDR2_UM),
+        .D_IN   (Din2_UM),
+        .D_OUT  (Dout2_UM)
+    );
 
 endmodule
