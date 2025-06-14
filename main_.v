@@ -1,4 +1,4 @@
-// 應該可以用-負片跟深淺
+// FF 有點怪 V-4
 module HDL_final(
     input clk,
     input rst_n,
@@ -138,70 +138,143 @@ module HDL_final(
   begin
     if (CC)
     begin
-      // 上半部分：正常左暗右亮
-      if (v_cnt < 540)
+      // 當 Brig=255 時，使用適中的處理方式並加強第四格的暗度
+      if (Brig == 8'd255)
       begin
-        if (h_cnt < 480)
-        begin        // 第一部分: 減少 1.0*Brig
-          temp_r = (DPi[23:16] > Brig) ? (DPi[23:16] - Brig) : 8'd0;
-          temp_g = (DPi[15:8] > Brig) ? (DPi[15:8] - Brig) : 8'd0;
-          temp_b = (DPi[7:0] > Brig) ? (DPi[7:0] - Brig) : 8'd0;
-        end
-        else if (h_cnt < 960)
-        begin // 第二部分: 減少 0.5*Brig
-          temp_r = (DPi[23:16] > (Brig >> 1)) ? (DPi[23:16] - (Brig >> 1)) : 8'd0;
-          temp_g = (DPi[15:8] > (Brig >> 1)) ? (DPi[15:8] - (Brig >> 1)) : 8'd0;
-          temp_b = (DPi[7:0] > (Brig >> 1)) ? (DPi[7:0] - (Brig >> 1)) : 8'd0;
-        end
-        else if (h_cnt < 1440)
-        begin // 第三部分: 增加 0.5*Brig
-          temp_r = ((DPi[23:16] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[23:16] + (Brig >> 1));
-          temp_g = ((DPi[15:8] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[15:8] + (Brig >> 1));
-          temp_b = ((DPi[7:0] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[7:0] + (Brig >> 1));
-        end
-        else
-        begin                   // 第四部分: 增加 1.0*Brig
-          temp_r = ((DPi[23:16] + Brig) > 255) ? 8'd255 : (DPi[23:16] + Brig);
-          temp_g = ((DPi[15:8] + Brig) > 255) ? 8'd255 : (DPi[15:8] + Brig);
-          temp_b = ((DPi[7:0] + Brig) > 255) ? 8'd255 : (DPi[7:0] + Brig);
-        end
+        // 上半部分：適中對比度的漸變，第四格更暗
+        if (v_cnt < 540)
+        begin
+          if (h_cnt < 480)
+          begin        // 第一部分: 中亮
+            temp_r = ((DPi[23:16] + 64) > 255) ? 8'd255 : (DPi[23:16] + 64);
+            temp_g = ((DPi[15:8] + 64) > 255) ? 8'd255 : (DPi[15:8] + 64);
+            temp_b = ((DPi[7:0] + 64) > 255) ? 8'd255 : (DPi[7:0] + 64);
+          end
+          else if (h_cnt < 960)
+          begin // 第二部分: 最亮
+            temp_r = DPi[23:16];
+            temp_g = DPi[15:8];
+            temp_b = DPi[7:0];
+          end
+          else if (h_cnt < 1440)
+          begin // 第三部分: 中暗
+            temp_r = (DPi[23:16] > 64) ? (DPi[23:16] - 64) : 8'd0;
+            temp_g = (DPi[15:8] > 64) ? (DPi[15:8] - 64) : 8'd0;
+            temp_b = (DPi[7:0] > 64) ? (DPi[7:0] - 64) : 8'd0;
+          end
+          else
+          begin                   // 第四部分: 更暗 (除以8)
+            temp_r = DPi[23:16] >> 3;
+            temp_g = DPi[15:8] >> 3;
+            temp_b = DPi[7:0] >> 3;
+          end
 
-        cc_r = temp_r;
-        cc_g = temp_g;
-        cc_b = temp_b;
+          cc_r = temp_r;
+          cc_g = temp_g;
+          cc_b = temp_b;
+        end
+        // 下半部分：對應處理後負片，第四格負片後更暗
+        else
+        begin
+          if (h_cnt < 480)
+          begin        // 第一部分: 更暗再負片 → 負片後變很亮
+            temp_r = DPi[23:16] >> 3;
+            temp_g = DPi[15:8] >> 3;
+            temp_b = DPi[7:0] >> 3;
+          end
+          else if (h_cnt < 960)
+          begin // 第二部分: 中暗再負片 → 負片後變中亮
+            temp_r = (DPi[23:16] > 64) ? (DPi[23:16] - 64) : 8'd0;
+            temp_g = (DPi[15:8] > 64) ? (DPi[15:8] - 64) : 8'd0;
+            temp_b = (DPi[7:0] > 64) ? (DPi[7:0] - 64) : 8'd0;
+          end
+          else if (h_cnt < 1440)
+          begin // 第三部分: 原圖再負片 → 負片後變中暗
+            temp_r = DPi[23:16];
+            temp_g = DPi[15:8];
+            temp_b = DPi[7:0];
+          end
+          else
+          begin                   // 第四部分: 很亮再負片 → 負片後變更暗
+            temp_r = ((DPi[23:16] + 128) > 255) ? 8'd255 : (DPi[23:16] + 128);
+            temp_g = ((DPi[15:8] + 128) > 255) ? 8'd255 : (DPi[15:8] + 128);
+            temp_b = ((DPi[7:0] + 128) > 255) ? 8'd255 : (DPi[7:0] + 128);
+          end
+
+          // 負片處理
+          cc_r = 8'd255 - temp_r;
+          cc_g = 8'd255 - temp_g;
+          cc_b = 8'd255 - temp_b;
+        end
       end
-      // 下半部分：左右交換後再負片
       else
       begin
-        if (h_cnt < 480)
-        begin        // 左邊變成: 增加 1.0*Brig (對應原右邊)
-          temp_r = ((DPi[23:16] + Brig) > 255) ? 8'd255 : (DPi[23:16] + Brig);
-          temp_g = ((DPi[15:8] + Brig) > 255) ? 8'd255 : (DPi[15:8] + Brig);
-          temp_b = ((DPi[7:0] + Brig) > 255) ? 8'd255 : (DPi[7:0] + Brig);
-        end
-        else if (h_cnt < 960)
-        begin // 第二部分: 增加 0.5*Brig (對應原第三部分)
-          temp_r = ((DPi[23:16] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[23:16] + (Brig >> 1));
-          temp_g = ((DPi[15:8] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[15:8] + (Brig >> 1));
-          temp_b = ((DPi[7:0] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[7:0] + (Brig >> 1));
-        end
-        else if (h_cnt < 1440)
-        begin // 第三部分: 減少 0.5*Brig (對應原第二部分)
-          temp_r = (DPi[23:16] > (Brig >> 1)) ? (DPi[23:16] - (Brig >> 1)) : 8'd0;
-          temp_g = (DPi[15:8] > (Brig >> 1)) ? (DPi[15:8] - (Brig >> 1)) : 8'd0;
-          temp_b = (DPi[7:0] > (Brig >> 1)) ? (DPi[7:0] - (Brig >> 1)) : 8'd0;
-        end
-        else
-        begin                   // 右邊變成: 減少 1.0*Brig (對應原左邊)
-          temp_r = (DPi[23:16] > Brig) ? (DPi[23:16] - Brig) : 8'd0;
-          temp_g = (DPi[15:8] > Brig) ? (DPi[15:8] - Brig) : 8'd0;
-          temp_b = (DPi[7:0] > Brig) ? (DPi[7:0] - Brig) : 8'd0;
-        end
+        // 原有的漸變處理 (適用於 Brig != 255)
+        // 上半部分：正常左暗右亮
+        if (v_cnt < 540)
+        begin
+          if (h_cnt < 480)
+          begin        // 第一部分: 減少 1.0*Brig
+            temp_r = (DPi[23:16] > Brig) ? (DPi[23:16] - Brig) : 8'd0;
+            temp_g = (DPi[15:8] > Brig) ? (DPi[15:8] - Brig) : 8'd0;
+            temp_b = (DPi[7:0] > Brig) ? (DPi[7:0] - Brig) : 8'd0;
+          end
+          else if (h_cnt < 960)
+          begin // 第二部分: 減少 0.5*Brig
+            temp_r = (DPi[23:16] > (Brig >> 1)) ? (DPi[23:16] - (Brig >> 1)) : 8'd0;
+            temp_g = (DPi[15:8] > (Brig >> 1)) ? (DPi[15:8] - (Brig >> 1)) : 8'd0;
+            temp_b = (DPi[7:0] > (Brig >> 1)) ? (DPi[7:0] - (Brig >> 1)) : 8'd0;
+          end
+          else if (h_cnt < 1440)
+          begin // 第三部分: 增加 0.5*Brig
+            temp_r = ((DPi[23:16] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[23:16] + (Brig >> 1));
+            temp_g = ((DPi[15:8] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[15:8] + (Brig >> 1));
+            temp_b = ((DPi[7:0] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[7:0] + (Brig >> 1));
+          end
+          else
+          begin                   // 第四部分: 增加 1.0*Brig
+            temp_r = ((DPi[23:16] + Brig) > 255) ? 8'd255 : (DPi[23:16] + Brig);
+            temp_g = ((DPi[15:8] + Brig) > 255) ? 8'd255 : (DPi[15:8] + Brig);
+            temp_b = ((DPi[7:0] + Brig) > 255) ? 8'd255 : (DPi[7:0] + Brig);
+          end
 
-        // 負片處理
-        cc_r = 8'd255 - temp_r;
-        cc_g = 8'd255 - temp_g;
-        cc_b = 8'd255 - temp_b;
+          cc_r = temp_r;
+          cc_g = temp_g;
+          cc_b = temp_b;
+        end
+        // 下半部分：左右交換後再負片
+        else
+        begin
+          if (h_cnt < 480)
+          begin        // 左邊變成: 增加 1.0*Brig (對應原右邊)
+            temp_r = ((DPi[23:16] + Brig) > 255) ? 8'd255 : (DPi[23:16] + Brig);
+            temp_g = ((DPi[15:8] + Brig) > 255) ? 8'd255 : (DPi[15:8] + Brig);
+            temp_b = ((DPi[7:0] + Brig) > 255) ? 8'd255 : (DPi[7:0] + Brig);
+          end
+          else if (h_cnt < 960)
+          begin // 第二部分: 增加 0.5*Brig (對應原第三部分)
+            temp_r = ((DPi[23:16] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[23:16] + (Brig >> 1));
+            temp_g = ((DPi[15:8] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[15:8] + (Brig >> 1));
+            temp_b = ((DPi[7:0] + (Brig >> 1)) > 255) ? 8'd255 : (DPi[7:0] + (Brig >> 1));
+          end
+          else if (h_cnt < 1440)
+          begin // 第三部分: 減少 0.5*Brig (對應原第二部分)
+            temp_r = (DPi[23:16] > (Brig >> 1)) ? (DPi[23:16] - (Brig >> 1)) : 8'd0;
+            temp_g = (DPi[15:8] > (Brig >> 1)) ? (DPi[15:8] - (Brig >> 1)) : 8'd0;
+            temp_b = (DPi[7:0] > (Brig >> 1)) ? (DPi[7:0] - (Brig >> 1)) : 8'd0;
+          end
+          else
+          begin                   // 右邊變成: 減少 1.0*Brig (對應原左邊)
+            temp_r = (DPi[23:16] > Brig) ? (DPi[23:16] - Brig) : 8'd0;
+            temp_g = (DPi[15:8] > Brig) ? (DPi[15:8] - Brig) : 8'd0;
+            temp_b = (DPi[7:0] > Brig) ? (DPi[7:0] - Brig) : 8'd0;
+          end
+
+          // 負片處理
+          cc_r = 8'd255 - temp_r;
+          cc_g = 8'd255 - temp_g;
+          cc_b = 8'd255 - temp_b;
+        end
       end
     end
     else
