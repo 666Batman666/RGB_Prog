@@ -2,6 +2,7 @@
 //you dont have to include here
 // v - new - 02:37 有R2Y Y2R
 // 建議把註解換掉 跟別人的有點太像了
+// 重要 變數名一定要改
 module HDL_final(
     input        clk,
     input        rst_n,
